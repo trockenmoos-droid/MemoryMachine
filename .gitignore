@@ -1,0 +1,6 @@
+build/
+build-*/
+render-out/
+*.vst3
+*.lv2
+.DS_Store

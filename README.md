@@ -1,28 +1,71 @@
+# Memory Machine — memory-decay effect (VST3 / AU / LV2)
 
-# Memory Machine — CMake + CI build
+An audio effect modelled on how memory fails. The sound blurs and loses
+resolution, the pitch drifts like old tape, moments drop out, and fragments of
+the recent past come back. Sometimes they come from the wrong place: that's
+déjà-vu.
 
-This repo is set up to build a **VST3** using CMake and GitHub Actions.
+![Memory Machine](docs/screenshot.png)
 
-## Local build (once JUCE is installed via vcpkg/Homebrew)
+Part of the trockenmoos audio series — <https://www.trockenmoos.com/plugins/>
 
-1. Place `MemoryMachine.cpp` (from our chat canvas) next to `CMakeLists.txt`.
-2. Configure + build:
-   - Windows (VS 2022, vcpkg):
-     ```powershell
-     cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE="C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake"
-     cmake --build build --config Release
-     ```
-   - macOS (Homebrew):
-     ```bash
-     cmake -B build -S . -DCMAKE_PREFIX_PATH="$(brew --prefix)/opt/juce"
-     cmake --build build --config Release
-     ```
-3. The built `.vst3` will be under the build artefacts (e.g., `build/.../VST3/MemoryMachine.vst3`).
+## Controls
 
-## CI build (GitHub Actions)
+| Section | Control | What it does |
+|---|---|---|
+| **Recall** | Fragment | How often a slice of the recent past is replayed (1–4 repeats) |
+| | Slice / Sync + Note | Slice length, free in ms or tempo-synced (1/1 … 1/32, dotted, triplets) |
+| | Memory | How far back recall can reach (0.25–8 s) |
+| | Déjà-vu | Chance that a recall comes from further back instead of the last slice |
+| | How far back | How deep into the memory window a déjà-vu recall reaches |
+| **Decay** | Blur | Lowpass, 20 kHz → 500 Hz (0 % = off) |
+| | Bits / Downsample | Resolution loss (24 bit = off, 1× = off) |
+| | Forget | Random dropouts, from rare to constant |
+| **Drift** | Depth / Rate | Wow & flutter: real pitch deviation in cents; flutter runs 6× the wow rate |
+| **Out** | Mix / Output | Dry/wet and output level |
 
-1. Push this folder to a new GitHub repo.
-2. Add `MemoryMachine.cpp` at the repo root.
-3. The included workflow will build on **Windows** and **macOS**, and upload `MemoryMachine.vst3` as artifacts.
+Eight factory presets: Default, Faint, Old Cassette, Childhood, Deja-vu,
+Stutter Grid, Fading Away, Broken Recorder.
 
-Retrieve them from the "Actions" tab → latest workflow run → Artifacts.
+Every decision is made per sample, so the effect sounds the same at any host
+buffer size. Synced recalls land on the host's beat grid while the transport
+runs.
+
+## Build
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release --parallel
+```
+
+JUCE 8.0.4 is fetched automatically. Builds land in
+`build/MemoryMachine_artefacts/Release/`. Pass `-DCOPY_PLUGIN_AFTER_BUILD=OFF`
+to skip installing into the system plugin folder.
+
+| Platform | Needs | Notes |
+|---|---|---|
+| Windows | Visual Studio 2022 | Static MSVC runtime, no redistributable needed. |
+| macOS | Xcode 14+ | Universal binary (arm64 + x86_64). Unsigned builds need right-click → Open, or `xattr -dr com.apple.quarantine` on the plugin. |
+| Linux | gcc 11+, ALSA and X11 dev packages | See the package list in `.github/workflows/build.yml`. Builds VST3 and LV2. |
+
+GitHub Actions builds all three platforms on every push (Actions tab →
+latest run → Artifacts). Pushing a tag like `v0.2.0` attaches zipped builds
+to a GitHub release.
+
+## Render test
+
+```bash
+cmake -B build -DMM_BUILD_TESTS=ON -DCOPY_PLUGIN_AFTER_BUILD=OFF
+cmake --build build --target MemoryMachineRender
+./build/MemoryMachineRender_artefacts/Release/MemoryMachineRender out
+```
+
+Checks block-size independence, transparency with every stage off, dry
+passthrough at mix 0, real pitch drift, recall behaviour, grid-locked sync and
+the stability of every preset. It also writes a demo WAV per preset.
+
+## History
+
+Started September 2025 as a single-file prototype that never compiled. It was
+rebuilt in November 2026 with the same concept and controls. The code is
+written by Claude (Anthropic) from Christoph Campregher's concept and testing.
