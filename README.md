@@ -1,4 +1,4 @@
-# Memory Machine — memory-decay effect (VST3 / AU / LV2)
+# Memory Machine — memory-decay effect (VST3 / AU / LV2) · v0.3.0
 
 An audio effect modelled on how memory fails. The sound blurs and loses
 resolution, the pitch drifts like old tape, moments drop out, and fragments of
@@ -23,9 +23,33 @@ Part of the trockenmoos audio series — <https://www.trockenmoos.com/plugins/>
 | | Forget | Random dropouts, from rare to constant |
 | **Drift** | Depth / Rate | Wow & flutter: real pitch deviation in cents; flutter runs 6× the wow rate |
 | **Out** | Mix / Output | Dry/wet and output level |
+| **Moving Filter** | Type | Off, Lowpass, Bandpass, Highpass (resonant, on the wet signal) |
+| | Motion | Sine, Drift (smooth random), Steps (random jumps), Envelope (opens with the input) |
+| | Freq / Resonance | Centre frequency 40 Hz – 18 kHz, resonance up to self-oscillation (soft-limited) |
+| | Sweep / Speed | Modulation depth (±4 octaves) and rate |
+| **Weird** | Backwards | Chance that a recalled slice plays in reverse |
+| | Warp | Chance that a recall comes back at the wrong speed: an octave down, an octave up or a fifth up |
+| | Rumination | The worn output is written back into memory one slice later, so memories keep circling and wear a little more on every pass. Synced slices make it a tempo-locked decaying loop |
 
-Eight factory presets: Default, Faint, Old Cassette, Childhood, Deja-vu,
-Stutter Grid, Fading Away, Broken Recorder.
+Thirteen factory presets: Default, Faint, Old Cassette, Childhood, Deja-vu,
+Stutter Grid, Fading Away, Broken Recorder, Moving Haze, Ghost Steps,
+Backwards Dream, Rumination, Envelope Wah.
+
+### Your own presets
+
+**Save** in the preset bar stores the current settings under a name; `<` and
+`>` step through factory and user presets. The `...` menu deletes the current
+user preset (moved to the trash), opens the preset folder, or rescans it.
+Presets are plain XML files (`.mmpreset`) in
+
+- Windows: `Documents\trockenmoos\Memory Machine\Presets`
+- macOS: `~/Documents/trockenmoos/Memory Machine/Presets`
+- Linux: `~/Documents/trockenmoos/Memory Machine/Presets` (or your XDG documents folder)
+
+so they can be copied between computers and shared. Presets and sessions from
+older versions load fine; controls they don't know start at their defaults.
+
+The version number is shown under the title.
 
 Every decision is made per sample, so the effect sounds the same at any host
 buffer size. Synced recalls land on the host's beat grid while the transport
@@ -61,8 +85,17 @@ cmake --build build --target MemoryMachineRender
 ```
 
 Checks block-size independence, transparency with every stage off, dry
-passthrough at mix 0, real pitch drift, recall behaviour, grid-locked sync and
-the stability of every preset. It also writes a demo WAV per preset.
+passthrough at mix 0, real pitch drift, recall behaviour, grid-locked sync,
+that the filter really moves, that rumination outlives the input and stays
+bounded, backwards/warp recalls, the user-preset round trip, loading of
+older sessions, and the stability of every preset. It also writes a demo WAV
+per preset.
+
+## Changes
+
+- **0.3.0** — moving filter, Weird section (Backwards, Warp, Rumination),
+  user presets, 5 new factory presets, version number in the window
+- **0.2.0** — rebuild of the 2025 prototype: per-sample engine, new GUI, presets, CI
 
 ## History
 

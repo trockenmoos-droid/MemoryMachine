@@ -76,6 +76,7 @@ static void cleanSettings (MemoryMachineProcessor& p)
     setP (p, "blur", 0); setP (p, "bits", 24); setP (p, "downsample", 1); setP (p, "fragment", 0);
     setP (p, "driftDepth", 0); setP (p, "forget", 0); setP (p, "jumpProb", 0);
     setP (p, "mix", 1); setP (p, "outDB", 0); setP (p, "stutSync", 0);
+    setP (p, "filterType", 0); setP (p, "reverse", 0); setP (p, "warp", 0); setP (p, "rumination", 0);
 }
 
 static AudioBuffer<float> render (MemoryMachineProcessor& p, const AudioBuffer<float>& in, int block)
@@ -122,7 +123,12 @@ int main (int argc, char** argv)
     // 1. block-size independence (the old prototype decided everything per block)
     {
         MemoryMachineProcessor a, b;
-        a.setCurrentProgram (3); b.setCurrentProgram (3); // Childhood: everything moving
+        // Backwards Dream + rumination + an envelope... everything moving at once
+        for (auto* q : { &a, &b })
+        {
+            q->setCurrentProgram (10);
+            setP (*q, "rumination", 0.7f); setP (*q, "forget", 0.2f);
+        }
         const auto ra = render (a, loop, 32);
         const auto rb = render (b, loop, 512);
         check (maxDiff (ra, rb) < 1e-4f, "same output at 32 and 512 sample buffers (diff "
@@ -232,7 +238,110 @@ int main (int argc, char** argv)
                "synced recalls start on the 1/16 grid (" + String (onsets) + " onsets, " + String (offGrid) + " off-grid)");
     }
 
-    // 7. every preset finite, bounded; write demos
+    // 7. moving filter really moves (windowed level of filtered noise swings)
+    {
+        AudioBuffer<float> noise (2, (int) (kSR * 8));
+        Random rn (3);
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < noise.getNumSamples(); ++i)
+                noise.setSample (ch, i, rn.nextFloat() * 0.6f - 0.3f);
+
+        auto swing = [&] (float depth)
+        {
+            MemoryMachineProcessor p; cleanSettings (p);
+            setP (p, "filterType", 1); setP (p, "filterHz", 600); setP (p, "filterReso", 0.3f);
+            setP (p, "sweepDepth", depth); setP (p, "sweepRate", 0.5f); setP (p, "sweepShape", 0);
+            const auto r = render (p, noise, 256);
+            float lo = 1e9f, hi = 0.0f;
+            const int win = (int) (kSR * 0.05);
+            for (int s0 = (int) kSR; s0 + win < r.getNumSamples(); s0 += win)
+            {
+                const float rms = r.getRMSLevel (0, s0, win);
+                lo = jmin (lo, rms); hi = jmax (hi, rms);
+            }
+            return hi / jmax (lo, 1e-6f);
+        };
+        const float still = swing (0.0f), moving = swing (1.0f);
+        check (still < 1.6f && moving > 3.0f,
+               "filter sweep: level swing " + String (still, 2) + "x static vs " + String (moving, 2) + "x moving");
+    }
+
+    // 8. rumination: memories of memories outlive the input; stable at maximum
+    {
+        AudioBuffer<float> burst (loop);
+        const int stop = (int) (kSR * 6);
+        for (int ch = 0; ch < 2; ++ch) burst.clear (ch, stop, burst.getNumSamples() - stop);
+
+        auto tail = [&] (float fbAmt, float& peak)
+        {
+            MemoryMachineProcessor p; cleanSettings (p);
+            setP (p, "fragment", 1.0f); setP (p, "stutterMs", 150); setP (p, "rumination", fbAmt);
+            setP (p, "blur", 0.3f);
+            const auto r = render (p, burst, 256);
+            peak = r.getMagnitude (0, r.getNumSamples());
+            return r.getRMSLevel (0, stop + (int) (kSR * 1.0), (int) (kSR * 2.0));
+        };
+        float pk0 = 0, pk1 = 0;
+        const float t0 = tail (0.0f, pk0), t1 = tail (0.95f, pk1);
+        check (t1 > 5.0f * t0 + 1e-4f, "rumination keeps recalling after the input stopped (tail "
+                                         + String (t0, 4) + " -> " + String (t1, 4) + ")");
+        check (std::isfinite (pk1) && pk1 < 1.5f, "rumination at maximum stays bounded (peak " + String (pk1, 2) + ")");
+    }
+
+    // 9. backwards / warp change what comes back, stay finite
+    {
+        MemoryMachineProcessor a, b; cleanSettings (a); cleanSettings (b);
+        for (auto* q : { &a, &b }) { setP (*q, "fragment", 1.0f); setP (*q, "stutterMs", 200); }
+        setP (b, "reverse", 1.0f); setP (b, "warp", 1.0f);
+        const auto ra = render (a, loop, 256), rb = render (b, loop, 256);
+        const float pk = rb.getMagnitude (0, rb.getNumSamples());
+        check (maxDiff (ra, rb) > 0.05f && std::isfinite (pk) && pk < 1.5f,
+               "backwards + warp recalls differ from plain ones, peak " + String (pk, 2));
+    }
+
+    // 10. user presets: save, list, load, delete; old sessions get defaults
+    {
+        auto dir = File::getSpecialLocation (File::tempDirectory).getChildFile ("mm-preset-test");
+        dir.deleteRecursively();
+        MemoryMachineProcessor p; p.setPresetFolder (dir);
+        p.setCurrentProgram (10);
+        setP (p, "filterHz", 2345.0f); setP (p, "rumination", 0.42f);
+        const bool saved = p.saveUserPreset ("My: Memory?");    // illegal chars get cleaned
+        const auto names = p.getUserPresetNames();
+
+        std::vector<float> before;
+        for (auto* prm : p.getParameters()) before.push_back (prm->getValue());
+        p.setCurrentProgram (0);
+        const bool loaded = names.size() == 1 && p.loadUserPreset (names[0]);
+        bool same = true; size_t i = 0;
+        for (auto* prm : p.getParameters()) same = same && std::abs (prm->getValue() - before[i++]) < 1e-6f;
+        check (saved && loaded && same && p.isUserPreset() && p.getPresetName() == names[0],
+               "user preset round trip (\"" + names.joinIntoString (",") + "\")");
+
+        check (p.deleteUserPreset (names[0]) && p.getUserPresetNames().isEmpty(), "user preset delete");
+
+        // a v0.2 session has none of the new parameters -> they must come back as defaults
+        MemoryBlock mb; p.getStateInformation (mb);
+        auto xml = AudioProcessor::getXmlFromBinary (mb.getData(), (int) mb.getSize());
+        for (auto* e = xml->getFirstChildElement(); e != nullptr;)
+        {
+            auto* next = e->getNextElement();
+            const auto id = e->getStringAttribute ("id");
+            if (id == "filterType" || id == "filterHz" || id == "rumination") xml->removeChildElement (e, true);
+            e = next;
+        }
+        MemoryBlock old; AudioProcessor::copyXmlToBinary (*xml, old);
+        MemoryMachineProcessor q;
+        setP (q, "rumination", 0.9f);
+        q.setStateInformation (old.getData(), (int) old.getSize());
+        auto* rum = q.apvts.getParameter ("rumination");
+        check (std::abs (rum->getValue() - rum->getDefaultValue()) < 1e-6f
+               && std::abs (q.apvts.getRawParameterValue ("blur")->load() - p.apvts.getRawParameterValue ("blur")->load()) < 1e-5f,
+               "old session: kept values load, missing parameters fall back to defaults");
+        dir.deleteRecursively();
+    }
+
+    // 11. every preset finite, bounded; write demos
     MemoryMachineProcessor probe;
     writeWav (outDir.getChildFile ("00_dry.wav"), loop);
     for (int i = 0; i < probe.getNumPrograms(); ++i)
@@ -252,7 +361,7 @@ int main (int argc, char** argv)
         writeWav (outDir.getChildFile (String (i + 1).paddedLeft ('0', 2) + "_" + name.replaceCharacter (' ', '_') + ".wav"), r);
     }
 
-    // 8. editor builds and paints (snapshot for the README)
+    // 12. editor builds and paints (snapshot for the README)
     {
         MemoryMachineProcessor p;
         std::unique_ptr<AudioProcessorEditor> ed (p.createEditor());
